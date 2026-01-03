@@ -3,6 +3,7 @@ const ctx = canvas.getContext('2d');
 
 let gameSpeed = 6;
 let isGameOver = false;
+let isGameStarted = false; // Start screen state
 let score = 0;
 let highScore = localStorage.getItem('boldareRunHighScore') || 0;
 const maxSpeed = 15;
@@ -1964,6 +1965,128 @@ function resetGame() {
     initTerrain();
 }
 
+function drawStartScreen() {
+    // Cyberpunk gradient background
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, '#000022');
+    gradient.addColorStop(0.5, '#0a0a2e');
+    gradient.addColorStop(1, '#111');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Animated grid lines (background effect)
+    ctx.strokeStyle = 'rgba(0, 255, 136, 0.1)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 20; i++) {
+        const y = (i * 40 + gameFrame * 0.5) % canvas.height;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+    }
+
+    // Glowing title
+    const pulse = Math.sin(gameFrame * 0.05) * 0.3 + 0.7;
+    ctx.shadowColor = '#FFA500';
+    ctx.shadowBlur = 30 * pulse;
+    ctx.fillStyle = '#FFA500';
+    ctx.font = 'bold 56px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('BOLDARE RUN', canvas.width / 2, 120);
+
+    ctx.shadowBlur = 15 * pulse;
+    ctx.fillStyle = '#00FFFF';
+    ctx.font = 'bold 28px "Courier New", monospace';
+    ctx.fillText('Sprint to MVP', canvas.width / 2, 160);
+    ctx.shadowBlur = 0;
+
+    // Controls section
+    const controlsY = 220;
+    ctx.fillStyle = '#00FF88';
+    ctx.font = 'bold 22px "Courier New", monospace';
+    ctx.fillText('< CONTROLS >', canvas.width / 2, controlsY);
+
+    ctx.font = '18px "Courier New", monospace';
+    ctx.fillStyle = '#FFFFFF';
+    const controls = [
+        ['↑ / SPACE', 'Jump'],
+        ['←', 'Jetpack (hold)'],
+        ['→', 'Shoot Hotfix'],
+        ['↓', 'Crouch / Dive']
+    ];
+
+    controls.forEach((ctrl, i) => {
+        ctx.fillStyle = '#00AAFF';
+        ctx.textAlign = 'right';
+        ctx.fillText(ctrl[0], canvas.width / 2 - 20, controlsY + 35 + i * 28);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'left';
+        ctx.fillText(ctrl[1], canvas.width / 2 + 20, controlsY + 35 + i * 28);
+    });
+
+    // Obstacles section
+    const obstaclesY = controlsY + 160;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#FF6600';
+    ctx.font = 'bold 22px "Courier New", monospace';
+    ctx.fillText('< OBSTACLES >', canvas.width / 2, obstaclesY);
+
+    ctx.font = '16px "Courier New", monospace';
+    const obstacles = [
+        ['#FF0000', 'Bug (Red)', 'Jump over or Shoot'],
+        ['#9932CC', 'Scope Creep (Purple)', 'Must Shoot!'],
+        ['#FF6600', 'Ping (Orange)', 'Crouch under or Shoot']
+    ];
+
+    obstacles.forEach((obs, i) => {
+        // Color indicator
+        ctx.fillStyle = obs[0];
+        ctx.fillRect(canvas.width / 2 - 200, obstaclesY + 20 + i * 30, 15, 15);
+        // Name
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'left';
+        ctx.fillText(obs[1], canvas.width / 2 - 175, obstaclesY + 33 + i * 30);
+        // Action
+        ctx.fillStyle = '#888888';
+        ctx.textAlign = 'right';
+        ctx.fillText(obs[2], canvas.width / 2 + 200, obstaclesY + 33 + i * 30);
+    });
+
+    // Collectibles section
+    const collectY = obstaclesY + 130;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#00FFFF';
+    ctx.font = 'bold 22px "Courier New", monospace';
+    ctx.fillText('< POWER-UPS >', canvas.width / 2, collectY);
+
+    ctx.font = '16px "Courier New", monospace';
+    ctx.fillStyle = '#8B4513';
+    ctx.fillText('☕ Coffee = +1 Ammo', canvas.width / 2 - 100, collectY + 30);
+    ctx.fillStyle = '#00AAFF';
+    ctx.fillText('🔲 AI Chip = Jetpack Fuel', canvas.width / 2 + 100, collectY + 30);
+
+    // Start prompt (blinking)
+    if (Math.floor(gameFrame * 0.05) % 2 === 0) {
+        ctx.shadowColor = '#00FF00';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#00FF00';
+        ctx.font = 'bold 28px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('[ PRESS SPACE TO START ]', canvas.width / 2, canvas.height - 80);
+        ctx.shadowBlur = 0;
+    }
+
+    // High score
+    if (highScore > 0) {
+        ctx.fillStyle = '#FFD700';
+        ctx.font = '18px "Courier New", monospace';
+        ctx.fillText('Best Sprint: ' + highScore, canvas.width / 2, canvas.height - 40);
+    }
+
+    // Increment frame for animations
+    gameFrame++;
+}
+
 function drawGameOver() {
     ctx.fillStyle = '#FF0000';
     ctx.font = 'bold 64px "Courier New", monospace';
@@ -2068,6 +2191,13 @@ function drawScore() {
 }
 
 function gameLoop() {
+    // Show start screen if game hasn't started
+    if (!isGameStarted) {
+        drawStartScreen();
+        requestAnimationFrame(gameLoop);
+        return;
+    }
+
     draw();
     drawScore();
 
@@ -2238,6 +2368,11 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Space' || e.code === 'ArrowUp') {
         e.preventDefault();
         keys.up = true;
+        // Start game from start screen
+        if (!isGameStarted) {
+            isGameStarted = true;
+            return;
+        }
         if (isGameOver) {
             resetGame();
         } else {
