@@ -23,6 +23,398 @@ const keys = {
 // Crouch constants
 const CROUCH_HEIGHT_RATIO = 0.5; // Crouch to 50% height
 
+// ==========================================
+// PROCEDURAL SOUND SYSTEM (Web Audio API)
+// ==========================================
+class SoundManager {
+    constructor() {
+        this.audioContext = null;
+        this.masterGain = null;
+        this.isInitialized = false;
+        this.isMuted = false;
+        this.volume = 0.7; // Master volume (0-1)
+        this.jetpackNode = null; // For looping jetpack sound
+        this.jetpackGain = null;
+        // Music system
+        this.musicInterval = null;
+        this.isMusicPlaying = false;
+        this.isMusicMuted = false;
+        this.musicVolume = 0.25; // Lower than SFX
+        this.currentNote = 0;
+        // Cyberpunk bassline: A minor pentatonic, driving rhythm at 120 BPM
+        // Notes: A1, C2, D2, E2, G2, A2 (low frequencies for bass)
+        this.bassline = [55, 65, 73, 82, 98, 110, 82, 73]; // 8-note sequence
+    }
+
+    // Initialize AudioContext (must be called after user interaction)
+    init() {
+        if (this.isInitialized) return;
+
+        try {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this.masterGain = this.audioContext.createGain();
+            this.masterGain.connect(this.audioContext.destination);
+            this.masterGain.gain.value = this.volume;
+            this.isInitialized = true;
+        } catch (e) {
+            console.warn('Web Audio API not supported:', e);
+        }
+    }
+
+    // Set master volume (0-1)
+    setVolume(vol) {
+        this.volume = Math.max(0, Math.min(1, vol));
+        if (this.masterGain) {
+            this.masterGain.gain.value = this.isMuted ? 0 : this.volume;
+        }
+    }
+
+    // Toggle mute
+    toggleMute() {
+        this.isMuted = !this.isMuted;
+        if (this.masterGain) {
+            this.masterGain.gain.value = this.isMuted ? 0 : this.volume;
+        }
+        return this.isMuted;
+    }
+
+    // Generate a simple tone
+    playTone(freq, type = 'sine', duration = 0.1, volume = 1) {
+        if (!this.isInitialized || this.isMuted) return;
+
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        osc.type = type;
+        osc.frequency.value = freq;
+
+        gain.gain.value = volume * this.volume;
+        gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start();
+        osc.stop(this.audioContext.currentTime + duration);
+    }
+
+    // Generate white noise
+    playNoise(duration = 0.2, volume = 0.5) {
+        if (!this.isInitialized || this.isMuted) return;
+
+        const bufferSize = this.audioContext.sampleRate * duration;
+        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        const data = buffer.getChannelData(0);
+
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = this.audioContext.createBufferSource();
+        const gain = this.audioContext.createGain();
+
+        noise.buffer = buffer;
+        gain.gain.value = volume * this.volume;
+        gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
+
+        noise.connect(gain);
+        gain.connect(this.masterGain);
+
+        noise.start();
+        noise.stop(this.audioContext.currentTime + duration);
+    }
+
+    // === SPECIFIC SFX METHODS ===
+
+    // Jump: Sine wave sliding pitch up (200Hz to 600Hz)
+    jump() {
+        if (!this.isInitialized || this.isMuted) return;
+
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(200, this.audioContext.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(600, this.audioContext.currentTime + 0.15);
+
+        gain.gain.setValueAtTime(0.3 * this.volume, this.audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.2);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start();
+        osc.stop(this.audioContext.currentTime + 0.2);
+    }
+
+    // Shoot: Sawtooth wave sliding pitch down (pew-pew)
+    shoot() {
+        if (!this.isInitialized || this.isMuted) return;
+
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(800, this.audioContext.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(200, this.audioContext.currentTime + 0.1);
+
+        gain.gain.setValueAtTime(0.2 * this.volume, this.audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.15);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start();
+        osc.stop(this.audioContext.currentTime + 0.15);
+    }
+
+    // Explosion: Burst of white noise fading out
+    explosion() {
+        if (!this.isInitialized || this.isMuted) return;
+
+        const duration = 0.3;
+        const bufferSize = this.audioContext.sampleRate * duration;
+        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        const data = buffer.getChannelData(0);
+
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize); // Fade out
+        }
+
+        const noise = this.audioContext.createBufferSource();
+        const gain = this.audioContext.createGain();
+        const filter = this.audioContext.createBiquadFilter();
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(2000, this.audioContext.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(200, this.audioContext.currentTime + duration);
+
+        noise.buffer = buffer;
+        gain.gain.setValueAtTime(0.4 * this.volume, this.audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+
+        noise.start();
+        noise.stop(this.audioContext.currentTime + duration);
+    }
+
+    // Collect: High-pitched "ding" (two rapid sine waves)
+    collect() {
+        if (!this.isInitialized || this.isMuted) return;
+
+        // First ding
+        const osc1 = this.audioContext.createOscillator();
+        const gain1 = this.audioContext.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.value = 1000;
+        gain1.gain.setValueAtTime(0.25 * this.volume, this.audioContext.currentTime);
+        gain1.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.1);
+        osc1.connect(gain1);
+        gain1.connect(this.masterGain);
+        osc1.start();
+        osc1.stop(this.audioContext.currentTime + 0.1);
+
+        // Second ding (slightly delayed, higher pitch)
+        const osc2 = this.audioContext.createOscillator();
+        const gain2 = this.audioContext.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.value = 1500;
+        gain2.gain.setValueAtTime(0, this.audioContext.currentTime);
+        gain2.gain.setValueAtTime(0.25 * this.volume, this.audioContext.currentTime + 0.08);
+        gain2.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.2);
+        osc2.connect(gain2);
+        gain2.connect(this.masterGain);
+        osc2.start();
+        osc2.stop(this.audioContext.currentTime + 0.2);
+    }
+
+    // Jetpack: Low-frequency rumbling noise (looping)
+    startJetpack() {
+        if (!this.isInitialized || this.isMuted || this.jetpackNode) return;
+
+        // Create noise buffer for looping
+        const bufferSize = this.audioContext.sampleRate * 0.5;
+        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        const data = buffer.getChannelData(0);
+
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        this.jetpackNode = this.audioContext.createBufferSource();
+        this.jetpackGain = this.audioContext.createGain();
+        const filter = this.audioContext.createBiquadFilter();
+
+        filter.type = 'lowpass';
+        filter.frequency.value = 300; // Low rumble
+
+        this.jetpackNode.buffer = buffer;
+        this.jetpackNode.loop = true;
+        this.jetpackGain.gain.value = 0.15 * this.volume;
+
+        this.jetpackNode.connect(filter);
+        filter.connect(this.jetpackGain);
+        this.jetpackGain.connect(this.masterGain);
+
+        this.jetpackNode.start();
+    }
+
+    stopJetpack() {
+        if (this.jetpackNode) {
+            this.jetpackGain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.1);
+            this.jetpackNode.stop(this.audioContext.currentTime + 0.1);
+            this.jetpackNode = null;
+            this.jetpackGain = null;
+        }
+    }
+
+    // Game Over: Sad sequence of tones descending
+    gameOver() {
+        if (!this.isInitialized || this.isMuted) return;
+
+        const notes = [400, 350, 300, 200];
+        const duration = 0.25;
+
+        notes.forEach((freq, i) => {
+            const osc = this.audioContext.createOscillator();
+            const gain = this.audioContext.createGain();
+
+            osc.type = 'square';
+            osc.frequency.value = freq;
+
+            const startTime = this.audioContext.currentTime + i * duration;
+            gain.gain.setValueAtTime(0.2 * this.volume, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration - 0.05);
+
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+
+            osc.start(startTime);
+            osc.stop(startTime + duration);
+        });
+    }
+
+    // Crouch/Dive: Quick low thump
+    crouch() {
+        if (!this.isInitialized || this.isMuted) return;
+
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, this.audioContext.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(50, this.audioContext.currentTime + 0.1);
+
+        gain.gain.setValueAtTime(0.3 * this.volume, this.audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.1);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start();
+        osc.stop(this.audioContext.currentTime + 0.1);
+    }
+
+    // === BACKGROUND MUSIC SYSTEM ===
+
+    // Play a single bass note with attack/decay envelope
+    playBassNote(freq) {
+        if (!this.isInitialized || this.isMusicMuted) return;
+
+        const now = this.audioContext.currentTime;
+        const duration = 0.2; // Short punchy notes
+
+        // Main bass oscillator (sawtooth for grit)
+        const osc1 = this.audioContext.createOscillator();
+        const gain1 = this.audioContext.createGain();
+        const filter = this.audioContext.createBiquadFilter();
+
+        osc1.type = 'sawtooth';
+        osc1.frequency.value = freq;
+
+        // Sub bass (triangle, one octave lower)
+        const osc2 = this.audioContext.createOscillator();
+        const gain2 = this.audioContext.createGain();
+
+        osc2.type = 'triangle';
+        osc2.frequency.value = freq / 2; // Octave lower
+
+        // Low-pass filter for warmth
+        filter.type = 'lowpass';
+        filter.frequency.value = 400;
+        filter.Q.value = 2;
+
+        // Envelope: quick attack, medium decay
+        const vol = this.musicVolume * this.volume;
+        gain1.gain.setValueAtTime(0, now);
+        gain1.gain.linearRampToValueAtTime(vol * 0.6, now + 0.01); // Attack
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + duration); // Decay
+
+        gain2.gain.setValueAtTime(0, now);
+        gain2.gain.linearRampToValueAtTime(vol * 0.4, now + 0.01);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+        // Connect: osc -> filter -> gain -> master
+        osc1.connect(filter);
+        filter.connect(gain1);
+        gain1.connect(this.masterGain);
+
+        osc2.connect(gain2);
+        gain2.connect(this.masterGain);
+
+        osc1.start(now);
+        osc1.stop(now + duration);
+        osc2.start(now);
+        osc2.stop(now + duration);
+    }
+
+    // Start the background music loop (120 BPM = 500ms per beat)
+    startMusic() {
+        if (!this.isInitialized || this.isMusicPlaying) return;
+
+        this.isMusicPlaying = true;
+        this.currentNote = 0;
+
+        // 120 BPM = 2 beats per second = 500ms per beat
+        // For 8th notes at 120 BPM: 250ms interval
+        const beatInterval = 250;
+
+        this.musicInterval = setInterval(() => {
+            if (!this.isMusicMuted) {
+                this.playBassNote(this.bassline[this.currentNote]);
+            }
+            this.currentNote = (this.currentNote + 1) % this.bassline.length;
+        }, beatInterval);
+
+        // Play first note immediately
+        if (!this.isMusicMuted) {
+            this.playBassNote(this.bassline[0]);
+        }
+    }
+
+    // Stop the background music
+    stopMusic() {
+        if (this.musicInterval) {
+            clearInterval(this.musicInterval);
+            this.musicInterval = null;
+        }
+        this.isMusicPlaying = false;
+        this.currentNote = 0;
+    }
+
+    // Toggle music mute (M key)
+    toggleMusic() {
+        this.isMusicMuted = !this.isMusicMuted;
+        return this.isMusicMuted;
+    }
+}
+
+// Global sound manager instance (initialized on game start)
+const soundManager = new SoundManager();
+
 // Fast Fall constants
 const FAST_FALL_ACCELERATION = 0; // No extra gravity - just crouched hitbox in air
 const FAST_FALL_MIN_VELOCITY = 0; // No minimum speed boost
@@ -1106,6 +1498,7 @@ const player = {
     lastY: 0,
     isCrouching: false,
     isFastFalling: false,
+    wasThrusting: false,
 
     update() {
         this.lastY = this.y;
@@ -1125,6 +1518,14 @@ const player = {
 
         // Jetpack thrust: Shift key + has fuel + NOT fast falling
         const isThrusting = keys.left && jetpackFuel > 0 && !this.isFastFalling;
+
+        // Handle jetpack sound start/stop
+        if (isThrusting && !this.wasThrusting) {
+            soundManager.startJetpack();
+        } else if (!isThrusting && this.wasThrusting) {
+            soundManager.stopJetpack();
+        }
+        this.wasThrusting = isThrusting;
 
         if (this.isFastFalling) {
             // Fast fall: apply extra gravity and set minimum downward velocity
@@ -1209,6 +1610,7 @@ const player = {
             this.height = newHeight;
             this.y += heightDiff; // Move down so feet stay on ground
             this.isCrouching = true;
+            soundManager.crouch();
         } else if (!wantsToCrouch && this.isCrouching) {
             // Stop crouching: restore height, move y up
             const heightDiff = this.baseHeight - this.height;
@@ -1434,6 +1836,7 @@ const player = {
         if (this.grounded && !this.isCrouching) {
             this.velocityY = this.jumpPower;
             this.grounded = false;
+            soundManager.jump();
         }
     }
 };
@@ -1458,6 +1861,7 @@ function shoot() {
         const projectileX = player.x + player.width;
         const projectileY = player.y + player.height / 2 - 2;
         projectiles.push(new Projectile(projectileX, projectileY));
+        soundManager.shoot();
         lastShotTime = now;
         ammo--;
     }
@@ -1963,6 +2367,7 @@ function resetGame() {
     jetpackFuel = 0; // Start with no fuel
     isGameOver = false;
     initTerrain();
+    soundManager.startMusic(); // Restart background music
 }
 
 function drawStartScreen() {
@@ -2012,7 +2417,8 @@ function drawStartScreen() {
         ['↑ / SPACE', 'Jump'],
         ['←', 'Jetpack (hold)'],
         ['→', 'Shoot Hotfix'],
-        ['↓', 'Crouch / Dive']
+        ['↓', 'Crouch / Dive'],
+        ['M', 'Toggle Music']
     ];
 
     controls.forEach((ctrl, i) => {
@@ -2025,7 +2431,7 @@ function drawStartScreen() {
     });
 
     // Obstacles section
-    const obstaclesY = controlsY + 160;
+    const obstaclesY = controlsY + 185;
     ctx.textAlign = 'center';
     ctx.fillStyle = '#FF6600';
     ctx.font = 'bold 22px "Courier New", monospace';
@@ -2235,6 +2641,9 @@ function gameLoop() {
         // Check collision
         if (checkCollision(player, obstacles[i])) {
             isGameOver = true;
+            soundManager.stopJetpack();
+            soundManager.stopMusic();
+            soundManager.gameOver();
             // Save high score
             if (score > highScore) {
                 highScore = score;
@@ -2260,6 +2669,7 @@ function gameLoop() {
                 ammo++;
             }
             score += 50;
+            soundManager.collect();
             console.log('Coffee grabbed! +1 Hotfix ammo');
             continue;
         }
@@ -2284,6 +2694,7 @@ function gameLoop() {
                 jetpackFuel = JETPACK_MAX_FUEL;
             }
             score += 100;
+            soundManager.collect();
             console.log('AI Booster collected! +' + JETPACK_FUEL_PER_PICKUP + ' fuel. Total: ' + Math.floor(jetpackFuel));
             continue;
         }
@@ -2325,6 +2736,7 @@ function gameLoop() {
                 const wasPoChange = obstacle.type === 'pochange';
                 obstacles.splice(j, 1);
                 hitObstacle = true;
+                soundManager.explosion();
                 if (wasPoChange) {
                     score += 100;
                 } else {
@@ -2350,6 +2762,9 @@ function gameLoop() {
     // Check pit death (fell off screen)
     if (player.y > canvas.height) {
         isGameOver = true;
+        soundManager.stopJetpack();
+        soundManager.stopMusic();
+        soundManager.gameOver();
         if (score > highScore) {
             highScore = score;
             localStorage.setItem('boldareRunHighScore', highScore);
@@ -2371,6 +2786,8 @@ window.addEventListener('keydown', (e) => {
         // Start game from start screen
         if (!isGameStarted) {
             isGameStarted = true;
+            soundManager.init(); // Initialize audio on first user interaction
+            soundManager.startMusic(); // Start background music
             return;
         }
         if (isGameOver) {
@@ -2393,6 +2810,11 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'ArrowDown') {
         e.preventDefault();
         keys.down = true;
+    }
+    // Toggle Music: M key
+    if (e.code === 'KeyM') {
+        const muted = soundManager.toggleMusic();
+        console.log('Music ' + (muted ? 'muted' : 'unmuted'));
     }
 });
 
